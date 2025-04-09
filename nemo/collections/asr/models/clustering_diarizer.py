@@ -24,6 +24,7 @@ from typing import Any, List, Optional, Union
 import torch
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.utilities import rank_zero_only
+from pyannote.core.segment import Segment # ADDED (KazBrekker1)
 from tqdm import tqdm
 
 from nemo.collections.asr.metrics.der import score_labels
@@ -461,7 +462,15 @@ class ClusteringDiarizer(torch.nn.Module, Model, DiarizationMixin):
             device=self._speaker_model.device,
             verbose=self.verbose,
         )
+
         logging.info("Outputs are saved in {} directory".format(os.path.abspath(self._diarizer_params.out_dir)))
+
+        # EDIT START (KazBrekker1)
+        hyps_segments: list[list[tuple[Segment, str, str]]] = [
+            list(hyp[1].itertracks(yield_label=True)) for hyp in all_hypothesis
+        ]
+        return hyps_segments
+        # EDIT END (KazBrekker1)
 
         # Scoring
         return score_labels(
