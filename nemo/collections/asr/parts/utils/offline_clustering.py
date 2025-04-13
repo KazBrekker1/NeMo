@@ -487,45 +487,56 @@ def get_scale_interpolated_embs(
     return context_emb, session_scale_mapping_list
 
 
+# ADDED (KazBrekker1)
+# https://github.com/NVIDIA/NeMo/issues/5637#issuecomment-1406365072
+@torch.jit.script
 def getMultiScaleCosAffinityMatrix(
     multiscale_weights: torch.Tensor,
     embeddings_in_scales: List[torch.Tensor],
     timestamps_in_scales: List[torch.Tensor],
-    device: torch.device = torch.device('cpu'),
+    device: torch.device = torch.device("cpu"),
 ) -> torch.Tensor:
     """
     Calculate cosine similarity values among speaker embeddings for each scale then
     apply multiscale weights to calculate the fused similarity matrix.
-    NOTE: Due to CUDA memory limit, the embedding vectors in embeddings_in_scales are stored in `cpu` device.
 
     Args:
-        multiscale_weights (Tensor):
-            Tensor containing multiscale weights
-            Dimensions: (Number of scales) x 1
-        embeddings_in_scales (list):
-            List containing split embedding tensors by each scale
-        timestamps_in_scales (list):
-            List containing split timestamps tensors by each scale
-        device (torch.device):
-            Torch device variable
+        uniq_embs_and_timestamps (dict):
+            The dictionary containing embeddings, timestamps and multiscale weights.
+            If uniq_embs_and_timestamps contains only one scale, single scale diarization
+            is performed.
 
     Returns:
         fused_sim_d (Tensor):
-            An affinity matrix that is obtained by calculating the weighted sum of 
-            the multiple affinity matrices from the different scales.
+            This function generates an affinity matrix that is obtained by calculating
+            the weighted sum of the affinity matrices from the different scales.
     """
     multiscale_weights = torch.squeeze(multiscale_weights, dim=0).to(device)
     session_scale_mapping_list = get_argmin_mat(timestamps_in_scales)
     scale_list = list(range(len(timestamps_in_scales)))
-    fused_sim_d = torch.zeros(len(timestamps_in_scales[-1]), len(timestamps_in_scales[-1])).to(device)
+    print("\nStarting to Calculate affinity matrices")
+    fused_sim_d = torch.zeros(
+        len(timestamps_in_scales[-1]), len(timestamps_in_scales[-1])
+    ).to(device)
     for scale_idx in scale_list:
-        mapping_argmat = session_scale_mapping_list[scale_idx]
-        emb_t = embeddings_in_scales[scale_idx].half().to(device)
-        score_mat_torch = getCosAffinityMatrix(emb_t)
-        repeat_list = getRepeatedList(mapping_argmat, torch.tensor(score_mat_torch.shape[0])).to(device)
-        repeated_tensor_0 = torch.repeat_interleave(score_mat_torch, repeats=repeat_list, dim=0).to(device)
-        repeated_tensor_1 = torch.repeat_interleave(repeated_tensor_0, repeats=repeat_list, dim=1).to(device)
-        fused_sim_d += multiscale_weights[scale_idx] * repeated_tensor_1
+        with torch.no_grad():
+            mapping_argmat = session_scale_mapping_list[scale_idx]
+            emb_t = embeddings_in_scales[scale_idx].half().to(device)
+            score_mat_torch = getCosAffinityMatrix(emb_t)
+            repeat_list = getRepeatedList(
+                mapping_argmat, torch.tensor(score_mat_torch.shape[0])
+            ).to(device)
+            repeated_tensor_0 = torch.repeat_interleave(
+                score_mat_torch, repeats=repeat_list, dim=0
+            ).to(device)
+            repeated_tensor_1 = torch.repeat_interleave(
+                repeated_tensor_0, repeats=repeat_list, dim=1
+            ).to(device)
+            fused_sim_d = (
+                fused_sim_d + multiscale_weights[scale_idx] * repeated_tensor_1
+            )  # fused affinity matrix of scales
+
+    print(f"Fused affinity matrix size is : {fused_sim_d.size()}")
     return fused_sim_d
 
 

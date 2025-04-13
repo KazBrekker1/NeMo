@@ -357,7 +357,8 @@ class ClusteringDiarizer(torch.nn.Module, Model, DiarizationMixin):
             test_batch = [x.to(self._speaker_model.device) for x in test_batch]
             audio_signal, audio_signal_len, labels, slices = test_batch
             with autocast():
-                _, embs = self._speaker_model.forward(input_signal=audio_signal, input_signal_length=audio_signal_len)
+                with torch.no_grad(): # ADDED (KazBrekker1) https://github.com/NVIDIA/NeMo/issues/5637#issuecomment-1378313934
+                    _, embs = self._speaker_model.forward(input_signal=audio_signal, input_signal_length=audio_signal_len)
                 emb_shape = embs.shape[-1]
                 embs = embs.view(-1, emb_shape)
                 all_embs = torch.cat((all_embs, embs.cpu().detach()), dim=0)
